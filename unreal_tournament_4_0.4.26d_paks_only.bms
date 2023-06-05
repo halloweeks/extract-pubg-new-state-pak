@@ -1,0 +1,395 @@
+# Unreal Engine 4 - Unreal Tournament 4 (*WindowsNoEditor.pak) (script 0.4.26c)
+# script for QuickBMS http://quickbms.aluigi.org
+
+math NO_TAIL_INFO = 0   # set it to 1 for archives with corrupt/missing tail information (extract without index)
+math VERSION = 3        # set it to 3 if NO_TAIL_INFO = 1 for most of modern games
+
+quickbmsver "0.11"
+
+math TOC_FILE = 0
+
+# set your AES_KEY here as text or C string ("\x11\x22...") or umodel hex (0x1122...)
+set AES_KEY binary ""
+putarray 10 -1 ""
+math AES_KEY_IS_SET = 0
+
+math ALTERNATIVE_MODE = 0
+math BASE_PATH_INCLUDED = 1
+math DIR_FLAG = 1
+math NAME_FROM_ARRAY = 0
+math SKIP_COUNT = 0
+
+get ARCHIVE_NAME basename
+get ARCHIVE_PATH FILEPATH
+
+math CHUNK_OFFSET_ABSOLUTE = -1 # default, enabled
+
+# 1 = HIT
+math WORKAROUND = 0
+
+if NO_TAIL_INFO != 0
+    get OFFSET asize
+    math ALTERNATIVE_MODE = 1
+else
+	goto -0xcc  # version 11 (4.26)
+	savepos MAGIC_OFF
+	get MAGIC long
+
+    get VERSION long
+    endian guess VERSION
+    get OFFSET longlong
+    get SIZE longlong
+    getdstring HASH 20
+	xmath SIZE "MAGIC_OFF - OFFSET - 1"
+	
+	get FSIZE asize
+	savepos CUR_POS
+	if CUR_POS = FSIZE
+		string COMP1 = ""
+	else
+		get CHECK byte
+		if CHECK > 1
+			goto -1 0 SEEK_CUR
+		endif
+		getdstring COMP1 32
+		getdstring COMP2 32
+		string COMP1 l COMP1
+		string COMP2 l COMP2
+	endif
+
+    if VERSION >= 3
+        goto MAGIC_OFF
+        goto -1 0 SEEK_CUR
+        get ENCRYPTED byte
+        if ENCRYPTED != 0
+            callfunction SET_AES_KEY 1
+            log MEMORY_FILE5 OFFSET SIZE
+            encryption "" ""
+        else
+			log MEMORY_FILE5 OFFSET SIZE
+        endif
+		math TOC_FILE5 = -5
+    endif
+
+	math INDEX_SIZE = SIZE
+    goto 0
+    callfunction GET_BASE_PATH 1
+endif
+
+get FILES long TOC_FILE5
+getdstring DUMMY 12 TOC_FILE5
+get HASHES_OFFSET longlong TOC_FILE5
+math HASHES_OFFSET - OFFSET
+get HASHES_SIZE longlong TOC_FILE5
+getdstring DUMMY 24 TOC_FILE5
+get NAMES_OFFSET longlong TOC_FILE5
+math NAMES_OFFSET - OFFSET
+get NAMES_SIZE longlong TOC_FILE5
+getdstring DUMMY 24 TOC_FILE5
+savepos BASE_INDEX_OFF TOC_FILE5
+goto NAMES_OFFSET TOC_FILE5
+
+math CHUNK_SIZE = 0x10000   # just in case...
+for i = 0 < FILES
+	callfunction GET_NAME_AND_OFFSET 1
+	if NAME = ""
+		continue
+	endif
+    savepos TMP_OFF TOC_FILE
+
+    get OFFSET longlong TOC_FILE
+	get ZSIZE longlong TOC_FILE
+	get SIZE longlong TOC_FILE
+	get ZIP long TOC_FILE
+    getdstring HASH 20 TOC_FILE
+	
+    math CHUNKS = 0
+    math ENCRYPTED = 0
+    if VERSION >= 3
+        if ZIP != 0
+            get CHUNKS long TOC_FILE
+            for x = 0 < CHUNKS
+                get CHUNK_OFFSET longlong TOC_FILE
+                get CHUNK_END_OFFSET longlong TOC_FILE
+                putarray 0 x CHUNK_OFFSET
+                putarray 1 x CHUNK_END_OFFSET
+            next x
+        endif
+        get ENCRYPTED byte TOC_FILE
+        get CHUNK_SIZE long TOC_FILE
+    endif
+    #if ALTERNATIVE_MODE != 0
+        savepos TMP_OFF TOC_FILE
+        math OFFSET + TMP_OFF
+    #endif
+
+    #comtype copy    
+	callfunction COMPRESSION_TYPE 1
+
+    if CHUNKS > 0
+        log NAME 0 0
+        append
+        math TMP_SIZE = SIZE
+		if CHUNK_OFFSET_ABSOLUTE < 0 && OFFSET != 0
+			getarray CHUNK_OFFSET 0 0
+			if CHUNK_OFFSET u< OFFSET
+				math CHUNK_OFFSET_ABSOLUTE = 0
+			else
+				math CHUNK_OFFSET_ABSOLUTE = 1
+			endif
+		endif
+        for x = 0 < CHUNKS
+            getarray CHUNK_OFFSET 0 x
+            getarray CHUNK_END_OFFSET 1 x
+            math CHUNK_ZSIZE = CHUNK_END_OFFSET
+            math CHUNK_ZSIZE - CHUNK_OFFSET
+            math CHUNK_XSIZE = CHUNK_ZSIZE
+            if ENCRYPTED != 0
+                callfunction SET_AES_KEY 1
+                math CHUNK_XSIZE x 16
+            endif
+            if TMP_SIZE u< CHUNK_SIZE
+                math CHUNK_SIZE = TMP_SIZE
+            endif
+            math CHUNK_OFFSET = OFFSET
+
+			if ZIP == 0
+				log NAME CHUNK_OFFSET CHUNK_SIZE 0 CHUNK_XSIZE	
+			else
+				clog NAME CHUNK_OFFSET CHUNK_ZSIZE CHUNK_SIZE 0 CHUNK_XSIZE
+			endif			
+			
+            math TMP_SIZE - CHUNK_SIZE
+			math OFFSET + CHUNK_XSIZE
+        next x
+        append
+		
+    else
+        # the file offset points to an entry containing
+        # the "same" OFFSET ZSIZE SIZE ZIP HASH ZERO fields,
+        # just an additional backup... so let's skip them
+        savepos BASE_OFF TOC_FILE
+        math BASE_OFF - TMP_OFF
+        math OFFSET + BASE_OFF
+        math XSIZE = ZSIZE
+        if ENCRYPTED != 0
+            callfunction SET_AES_KEY 1
+            math XSIZE x 16
+        endif	
+		if ZIP == 0
+			log NAME OFFSET SIZE 0 XSIZE	
+		else
+			clog NAME OFFSET ZSIZE SIZE 0 XSIZE
+		endif
+    endif
+    encryption "" ""
+
+    if ALTERNATIVE_MODE != 0
+		if CHUNKS == 0
+			math OFFSET + XSIZE
+		endif
+		goto OFFSET
+
+		get TMP1 longlong
+		get CHECK byte
+		if TMP1 == 0 && CHECK != 0
+			goto OFFSET
+			continue NEXT1
+		else
+			goto OFFSET
+		endif
+		xmath CHECK "0x800 - (OFFSET % 0x800)"
+		if CHECK <= 16
+			padding 0x800
+		endif	
+		
+		savepos OFFSET
+		get TMP1 longlong
+		get TMP2 longlong
+		if TMP2 == 0
+			padding 0x800
+		else
+			goto OFFSET
+		endif
+		
+		label NEXT1
+    endif
+next i
+
+print "\nFiles skipped: %SKIP_COUNT%"
+for i = 0 < SKIP_COUNT
+	getarray NAME 7 i
+	print "Skipped file: %NAME%"
+next i
+
+startfunction SET_AES_KEY_ASK
+    math AES_KEY_IS_SET = 1
+    print "The archive is encrypted, select the number of the key to use or type yours:"
+    for z = 0
+        getarray KEY 10 z
+        if KEY == ""
+            break
+        endif
+        print "%z%: %KEY%"
+    next z
+        print "%z%: press RETURN for no encryption (Lineage 2 Revolution)"
+    set KEY unknown "???"
+    strlen TMP KEY
+    if KEY == ""
+        math AES_KEY_IS_SET = -1
+        set AES_KEY string "no key, encryption disabled"
+    elif TMP <= 2
+        getarray AES_KEY 10 KEY
+        if AES_KEY strncmp "0x"
+            string AES_KEY << 2
+            string AES_KEY h AES_KEY
+        endif
+    elif KEY strncmp "0x"
+        string KEY << 2
+        string AES_KEY h KEY
+    else
+        set AES_KEY binary KEY
+    endif
+    print "KEY: %AES_KEY%"
+endfunction
+
+startfunction SET_AES_KEY
+    if AES_KEY_IS_SET == 0
+        callfunction SET_AES_KEY_ASK 1
+    endif
+    if AES_KEY_IS_SET > 0
+        encryption aes AES_KEY "" 0 32
+    endif
+endfunction
+
+startfunction GET_BASE_PATH
+    get NAMESZ long TOC_FILE5
+	getdstring BASE_PATH NAMESZ TOC_FILE5
+	if NAMESZ != 0x0A && NAMESZ < 0xFF
+		string BASE_PATH | "../../../"
+		math BASE_PATH_INCLUDED = 0
+	endif
+endfunction
+
+startfunction GET_NAME_AND_OFFSET
+	if NAME_FROM_ARRAY = 1
+		if CURR_NAME < DIR_FILES
+			getarray NAME 5 CURR_NAME
+			getarray OFFSET 6 CURR_NAME
+			goto OFFSET
+			math CURR_NAME + 1
+			if CURR_NAME = DIR_FILES
+				math NAME_FROM_ARRAY = 0
+			endif
+		endif
+	else	
+		if DIR_FLAG = 1
+			get DIR_COUNT long TOC_FILE5
+			math DIR_FLAG = 0
+		endif
+		
+		if DIR_COUNT = 0
+			math DIR_FLAG = 1
+			callfunction GET_NAME_AND_OFFSET 1
+		else
+			math DIR_COUNT - 1
+			get NAMESZ signed_long TOC_FILE5
+			if NAMESZ >= 0
+				getdstring DIR_NAME NAMESZ TOC_FILE5
+			else
+				math NAMESZ n NAMESZ
+				math NAMESZ * 2
+				getdstring DIR_NAME NAMESZ TOC_FILE5
+				set DIR_NAME unicode DIR_NAME
+			endif			
+			get DIR_FILES long TOC_FILE5
+			if DIR_FILES = 0
+				callfunction GET_NAME_AND_OFFSET 1
+			else 
+				for y = 0 < DIR_FILES
+					get NAMESZ signed_long TOC_FILE5
+					if NAMESZ >= 0
+						getdstring NAME NAMESZ TOC_FILE5
+					else
+						math NAMESZ n NAMESZ
+						math NAMESZ * 2
+						getdstring NAME NAMESZ TOC_FILE5
+						set NAME unicode NAME
+					endif
+					set TMP_NAME string ""
+					string TMP_NAME = DIR_NAME
+					string TMP_NAME + NAME
+					string NAME = TMP_NAME
+					callfunction APPEND_BASE_PATH 1
+					putarray 5 y NAME
+					
+					get OFFSET long TOC_FILE5
+					savepos TMP_INDEX_OFF TOC_FILE5
+					if OFFSET < INDEX_SIZE
+						xmath INDEX_OFF "BASE_INDEX_OFF + OFFSET"
+						goto INDEX_OFF TOC_FILE5
+						get FLAGS threebyte TOC_FILE5
+						get FLAG byte TOC_FILE5
+						if FLAG = 0xE0 || FLAG = 0xE1
+							get OFFSET long TOC_FILE5
+						elif FLAG = 0x60 || FLAG = 0x61
+							get OFFSET longlong TOC_FILE5
+						endif						
+					else 
+						putarray 7 SKIP_COUNT NAME
+						math SKIP_COUNT + 1
+						string NAME = ""
+						putarray 5 y NAME
+					endif
+					putarray 6 y OFFSET
+					goto TMP_INDEX_OFF TOC_FILE5
+				next y
+				math NAME_FROM_ARRAY = 1
+				math CURR_NAME = 0
+				callfunction GET_NAME_AND_OFFSET 1
+			endif
+		endif
+	endif
+endfunction
+
+startfunction APPEND_BASE_PATH
+	if BASE_PATH_INCLUDED == 0
+		set TMP_NAME string ""
+		string TMP_NAME + BASE_PATH
+		string TMP_NAME + NAME
+		string NAME = TMP_NAME
+	endif
+endfunction
+
+startfunction COMPRESSION_TYPE
+	if COMP1 = ""
+		comtype zlib
+	endif
+	
+	if ZIP = 1 && COMP1 = "zlib"
+		comtype zlib
+	elif ZIP = 1 && COMP1 = "zstd"
+		comtype zstd
+	elif ZIP = 1 && COMP1 = "oodle"
+		comtype oodle
+	elif ZIP = 1 && COMP1 = "lz4"
+		comtype lz4
+	elif ZIP = 1 && COMP1 = "gzip"
+		comtype gzip
+	elif ZIP = 2 && COMP2 = "zlib"
+		comtype zlib
+	elif ZIP = 2 && COMP2 = "zstd"
+		comtype zstd
+	elif ZIP = 2 && COMP2 = "oodle"
+		comtype oodle
+	elif ZIP = 2 && COMP2 = "lz4"
+		comtype lz4
+	elif ZIP = 2 && COMP2 = "gzip"
+		comtype gzip
+	elif ZIP = 4 || ZIP = 0x10 || ZIP = 3 # 3 - Faith of Danschant, 4 - Days Gone, 10 - ?
+		comtype oodle
+		if WORKAROUND == 2
+			comtype lz4
+		endif
+	endif
+endfunction
