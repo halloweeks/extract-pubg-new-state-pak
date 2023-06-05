@@ -1,6 +1,6 @@
 ## AES Keys for PUBG New State
 
-UMODEL FOR PUBG NEW STATE [Download](https://github.com/halloweeks/pubg-new-state-aes-key/blob/main/umodel.zip?raw=true)
+
 
 | Version           | Key                                                                   |
 | ----------------- | --------------------------------------------------------------------- |
